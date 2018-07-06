@@ -129,6 +129,7 @@ function _help {
     echo "         : ${0} i2c_qsfp_type_get [1-34]"
     echo "         : ${0} i2c_board_type_get"
     echo "         : ${0} i2c_psu_status"
+    echo "         : ${0} i2c_led_psu_status_set"
     echo "         : ${0} i2c_led_fan_status_set"
     echo "         : ${0} i2c_led_fan_tray_status_set"
     echo "         : ${0} i2c_cpld_version"
@@ -136,6 +137,8 @@ function _help {
     echo "         : ${0} i2c_test_all"
     echo "         : ${0} i2c_sys_led green|amber"
     echo "         : ${0} i2c_fan_led green|amber on|off"
+    echo "         : ${0} i2c_psu1_led green|amber"
+    echo "         : ${0} i2c_psu2_led green|amber"
     echo "         : ${0} i2c_fan_tray_led green|amber on|off [1-4]"
     echo "----------------------------------------------------"
 }
@@ -237,6 +240,7 @@ function _i2c_init {
     _i2c_qsfp_eeprom_init "new"
     _i2c_sfp_eeprom_init "new"
     _i2c_psu_eeprom_init "new"
+    _i2c_led_psu_status_set
     _i2c_led_fan_status_set
     _i2c_led_fan_tray_status_set
 
@@ -1276,12 +1280,12 @@ function _i2c_psu_eeprom_get {
 function _i2c_sys_led {
 
     if [ "${COLOR_SYS_LED}" == "green" ]; then
-        # set sys_led_g (0.7) = 1
+        # set sys_led_g (0.0) = 1
         output_reg=2
         mask=0x01
         value=0x01
     elif [ "${COLOR_SYS_LED}" == "amber" ]; then
-        # set sys_led_g (0.7) = 0
+        # set sys_led_g (0.0) = 0
         output_reg=2
         mask=0x01
         value=0x00
@@ -1292,6 +1296,7 @@ function _i2c_sys_led {
     fi
 
     #apply to io expander
+    echo "i2cset -m ${mask} -y ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}"
     i2cset -m ${mask} -y ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}
     echo "Done"
 
@@ -1378,6 +1383,43 @@ function _i2c_fan_led {
     echo "done..."
 }
 
+#Set PSU1 LED
+function _i2c_psu1_led {
+    local value=0
+    local mask=8
+
+    if [ "${COLOR_SYS_LED}" == "green" ]; then 
+        value=0x00
+    elif [ "${COLOR_SYS_LED}" == "amber" ]; then 
+        value=0xFF
+    else 
+        echo "Invalid Parameters ${COLOR_SYS_LED}, Exit!!!"
+        _help
+        exit ${FALSE}
+    fi
+
+    #echo "i2cset -m ${mask} -y -r ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}"
+    i2cset -m ${mask} -y -r ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}
+}
+
+#Set PSU2 LED
+function _i2c_psu2_led {
+    local value=0
+    local mask=16
+
+    if [ "${COLOR_SYS_LED}" == "green" ]; then 
+        value=0x00
+    elif [ "${COLOR_SYS_LED}" == "amber" ]; then 
+        value=0xFF
+    else 
+        echo "Invalid Parameters ${COLOR_SYS_LED}, Exit!!!"
+        _help
+        exit ${FALSE}
+    fi
+
+    #echo "i2cset -m ${mask} -y -r ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}"
+    i2cset -m ${mask} -y -r ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}
+}
 
 #Get PSU Status
 function _i2c_psu_status {
@@ -1387,7 +1429,7 @@ GPIO_BASE=256
     psu2_pwdgood_gpio=$((${GPIO_BASE}+96))
     psu2_exist_gpio=$((${GPIO_BASE}+97))
 
-echo "psu1_pwgood_gpio:${psu1_pwgood_gpio}, psu1_exist_gpio:${psu1_exist_gpio}, psu2_pwdgood_gpio:${psu2_pwdgood_gpio}, psu2_exist_gpio:${psu2_exist_gpio}"
+    #echo "psu1_pwgood_gpio:${psu1_pwgood_gpio}, psu1_exist_gpio:${psu1_exist_gpio}, psu2_pwdgood_gpio:${psu2_pwdgood_gpio}, psu2_exist_gpio:${psu2_exist_gpio}"
 
     psu2PwGood=`cat /sys/class/gpio/gpio${psu2_pwdgood_gpio}/value` # PSU0_PWROK (0.0)
     psu2Exist=`cat /sys/class/gpio/gpio${psu2_exist_gpio}/value` # PSU0_PRSNT_L (0.1)
@@ -1398,6 +1440,49 @@ echo "psu1_pwgood_gpio:${psu1_pwgood_gpio}, psu1_exist_gpio:${psu1_exist_gpio}, 
     printf "PSU2 Exist:%d PSU2 PW Good:%d\n" $psu2Exist $psu2PwGood
 }
 
+#Set PSU LED on LED Board
+function _i2c_led_psu_status_set {
+
+    echo "========================================================="
+    echo "# Description: PSU LED Status Setup"
+    echo "========================================================="
+
+    #Get PSU Status
+    _i2c_psu_status
+
+    #PSU1 Status
+    echo "------------------------------"
+    if [ "${psu1Exist}" == ${PSU_EXIST} ]; then
+        if [ "${psu1PwGood}" == ${PSU_DC_ON} ]; then
+            COLOR_SYS_LED="green"
+            _i2c_psu1_led
+        else
+            COLOR_SYS_LED="amber"
+            _i2c_psu1_led
+        fi
+    else
+        COLOR_SYS_LED="amber"
+        _i2c_psu1_led
+    fi
+    echo "set [PSU1 LED] = ${COLOR_SYS_LED}"
+
+    #PSU2 Status
+    echo "------------------------------"
+    if [ "${psu2Exist}" == ${PSU_EXIST} ]; then
+        if [ "${psu2PwGood}" == ${PSU_DC_ON} ]; then
+            COLOR_SYS_LED="green"
+            _i2c_psu2_led
+        else
+            COLOR_SYS_LED="amber"
+            #ONOFF_LED="on"
+            _i2c_psu2_led
+        fi
+    else
+        COLOR_SYS_LED="amber"
+        _i2c_psu2_led
+    fi
+    echo "set [PSU2 LED] = ${COLOR_SYS_LED}"
+}
 
 #Main Function
 function _main {
@@ -1444,6 +1529,8 @@ function _main {
         _i2c_qsfp_status_get
     elif [ "${EXEC_FUNC}" == "i2c_qsfp_type_get" ]; then
         _i2c_qsfp_type_get
+    elif [ "${EXEC_FUNC}" == "i2c_led_psu_status_set" ]; then
+        _i2c_led_psu_status_set
     elif [ "${EXEC_FUNC}" == "i2c_led_fan_status_set" ]; then
         _i2c_led_fan_status_set
     elif [ "${EXEC_FUNC}" == "i2c_led_fan_tray_status_set" ]; then
@@ -1454,6 +1541,10 @@ function _main {
         _i2c_fan_led
     elif [ "${EXEC_FUNC}" == "i2c_fan_tray_led" ]; then
         _i2c_fan_tray_led
+    elif [ "${EXEC_FUNC}" == "i2c_psu1_led" ]; then
+        _i2c_psu1_led
+    elif [ "${EXEC_FUNC}" == "i2c_psu2_led" ]; then
+        _i2c_psu2_led
     elif [ "${EXEC_FUNC}" == "i2c_board_type_get" ]; then
         _i2c_board_type_get
     elif [ "${EXEC_FUNC}" == "i2c_cpld_version" ]; then
