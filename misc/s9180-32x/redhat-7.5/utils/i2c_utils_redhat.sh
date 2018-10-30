@@ -776,7 +776,9 @@ function _i2c_gpio_deinit {
     echo "0x21" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN5_DEVICE}/delete_device
     echo "0x22" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN5_DEVICE}/delete_device
     echo "0x23" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN5_DEVICE}/delete_device
+  ((!BMC_ENABLE)) && {
     echo "0x25" > /sys/bus/i2c/devices/i2c-${NUM_I801_DEVICE}/delete_device
+  }
 }
 
 #TMP75 Init
