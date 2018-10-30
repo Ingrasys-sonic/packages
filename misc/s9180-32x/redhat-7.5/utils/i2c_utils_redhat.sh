@@ -29,11 +29,6 @@ COLOR_SYS_LED=${2}
 BLINK_LED=${4}
 FAN_TRAY=${4}
 
-#GPIO_BASE=0 for SONiC with Debian Kernel 3.16
-#GPIO_BASE=256 for ONL with Debian Kernel 3.16/4.9
-#GPIO_BASE=256 for ONL with RedHat Kernel 3.10
-GPIO_BASE=256
-
 ############################################################
 # Distributor ID: Debian
 # Description:    Debian GNU/Linux 8.6 (jessie)
@@ -48,6 +43,9 @@ COLOR_TITLE="\e[1;32m"   ### Green ###
 COLOR_WARNING="\e[1;33m" ### Yellow ###
 COLOR_ERROR="\e[1;31m"   ### Red ###
 COLOR_END="\e[0m"        ### END ###
+
+# 1 for BMC enabled platform, 0 for disabled
+BMC_ENABLE=0
 
 NUM_I801_DEVICE=0 # Main I2C
 NUM_MUX1_CHAN0_DEVICE=$(( ${NUM_I801_DEVICE} + 1 ))  # zQSFP I/O 0-7
@@ -77,6 +75,7 @@ NUM_FRU_MUX_CHAN2_DEVICE=$(( ${NUM_FRU_MUX_CHAN0_DEVICE} + 2 )) # FAN
 NUM_CPLD_DEVICE=$(( ${NUM_MUX7_CHAN0_DEVICE} + 3 )) # CPLD
 NUM_SFP1_DEVICE=$(( ${NUM_MUX7_CHAN0_DEVICE} + 4 )) # CPLD
 NUM_SFP2_DEVICE=$(( ${NUM_MUX7_CHAN0_DEVICE} + 5 )) # CPLD
+NUM_ROV_DEVICE=${NUM_MAIN_MUX_CHAN6_DEVICE}
 
 PATH_SYS_I2C_DEVICES="/sys/bus/i2c/devices"
 PATH_HWMON_ROOT_DEVICES="/sys/class/hwmon"
@@ -94,11 +93,25 @@ PATH_MUX_CHAN7_DEVICE="${PATH_SYS_I2C_DEVICES}/i2c-${NUM_MUX1_CHAN7_DEVICE}"
 PATH_MUX7_CHAN0_DEVICE="${PATH_SYS_I2C_DEVICES}/i2c-${NUM_MUX7_CHAN0_DEVICE}"
 PATH_MAIN_MUX_CHAN0_DEVICE="${PATH_SYS_I2C_DEVICES}/i2c-${NUM_MAIN_MUX_CHAN0_DEVICE}"
 
+# i2c address for deviecs
+CPLD_I2C_ADDR=0x33
+ROV_I2C_ADDR=0x22
+
 #Power Supply Status
 PSU_DC_ON=1
 PSU_DC_OFF=0
 PSU_EXIST=1
 PSU_NOT_EXIST=0
+
+# vdd value for mac
+rov_val_array=( 0.85 0.82 0.77 0.87 0.74 0.84 0.79 0.89 )
+rov_reg_array=( 0x24 0x21 0x1c 0x26 0x19 0x23 0x1e 0x28 )
+
+#GPIO Offset
+GPIO_OFFSET=0
+
+# debug printout
+DEBUG_PRINT=0
 
 # Help usage function
 function _help {
@@ -110,36 +123,46 @@ function _help {
     echo "EX       : ${0} help"
     echo "         : ${0} i2c_init"
     echo "         : ${0} i2c_deinit"
-    #echo "         : ${0} i2c_temp_init"
-    #echo "         : ${0} i2c_fan_init"
-    #echo "         : ${0} i2c_volmon_init"
-    #echo "         : ${0} i2c_io_exp_init"
-    #echo "         : ${0} i2c_gpio_init"
-    #echo "         : ${0} i2c_gpio_deinit"
-
+    echo "         : ${0} i2c_temp_init"
+  ((!BMC_ENABLE)) && {  
+    echo "         : ${0} i2c_fan_init"
+    echo "         : ${0} i2c_volmon_init"
+  }
+    echo "         : ${0} i2c_io_exp_init"
+    echo "         : ${0} i2c_gpio_init"
+    echo "         : ${0} i2c_gpio_deinit"
+  ((!BMC_ENABLE)) && {  
     echo "         : ${0} i2c_psu_eeprom_get"
     echo "         : ${0} i2c_mb_eeprom_get"
+  }
     echo "         : ${0} i2c_cpu_eeprom_get"
     echo "         : ${0} i2c_qsfp_eeprom_get [1-34]"
-    #echo "         : ${0} i2c_qsfp_eeprom_init new|delete"
-    #echo "         : ${0} i2c_sfp_eeprom_init new|delete"
-    #echo "         : ${0} i2c_mb_eeprom_init new|delete"
-    #echo "         : ${0} i2c_psu_eeprom_init new|delete"
+    echo "         : ${0} i2c_qsfp_eeprom_init new|delete"
+    echo "         : ${0} i2c_sfp_eeprom_init new|delete"
+    echo "         : ${0} i2c_mb_eeprom_init new|delete"
+  ((!BMC_ENABLE)) && {      
+    echo "         : ${0} i2c_psu_eeprom_init new|delete"
+  }
     echo "         : ${0} i2c_qsfp_status_get [1-34]"
     echo "         : ${0} i2c_qsfp_type_get [1-34]"
+    echo "         : ${0} i2c_qsfp_ddm_get [1-34]"
     echo "         : ${0} i2c_board_type_get"
+  ((!BMC_ENABLE)) && {    
     echo "         : ${0} i2c_psu_status"
     echo "         : ${0} i2c_led_psu_status_set"
     echo "         : ${0} i2c_led_fan_status_set"
     echo "         : ${0} i2c_led_fan_tray_status_set"
+   }
     echo "         : ${0} i2c_cpld_version"
     echo "         : ${0} i2c_port_led_set [1-34] green|yellow|off blink|noblink"
+  ((!BMC_ENABLE)) && {  
     echo "         : ${0} i2c_test_all"
     echo "         : ${0} i2c_sys_led green|amber"
     echo "         : ${0} i2c_fan_led green|amber on|off"
     echo "         : ${0} i2c_psu1_led green|amber"
     echo "         : ${0} i2c_psu2_led green|amber"
     echo "         : ${0} i2c_fan_tray_led green|amber on|off [1-4]"
+  }
     echo "----------------------------------------------------"
 }
 
@@ -157,11 +180,18 @@ function _retry {
     done
 }
 
+function _print {
+    ((DEBUG_PRINT)) && echo "$1"
+}
+
 #I2C Init
 function _i2c_init {
     echo "========================================================="
     echo "# Description: I2C Init"
     echo "========================================================="
+
+    # enable printout
+    DEBUG_PRINT=1
 
     if [ -e "/run/.platform_init_done" ]; then
        echo "Platform has been initialized."
@@ -175,6 +205,11 @@ function _i2c_init {
     modprobe i2c_i801
     modprobe i2c_dev
     modprobe i2c_mux_pca954x force_deselect_on_exit=1
+    #modprobe cpld_wdt
+
+
+    # need to check if bmc enbaled before any init procedure
+    _check_bmc_enable
 
     if [ ! -e "${PATH_SYS_I2C_DEVICES}/i2c-${NUM_MUX1_CHAN0_DEVICE}" ]; then
         _retry "echo 'pca9548 0x70' > ${PATH_I801_DEVICE}/new_device"
@@ -206,6 +241,8 @@ function _i2c_init {
     else
         echo "${PATH_MUX_CHAN6_DEVICE} 0x71 already init."
     fi
+ 
+((!BMC_ENABLE)) && {
     if [ ! -e "${PATH_SYS_I2C_DEVICES}/i2c-${NUM_MAIN_MUX_CHAN0_DEVICE}" ]; then
         _retry "echo 'pca9548 0x76' > ${PATH_I801_DEVICE}/new_device"
     else
@@ -216,6 +253,8 @@ function _i2c_init {
     else
         echo "${PATH_MAIN_MUX_CHAN0_DEVICE} 0x72 already init."
     fi
+}
+
     rmmod coretemp
     rmmod jc42
     rmmod w83795
@@ -228,27 +267,79 @@ function _i2c_init {
     modprobe lm90
     modprobe eeprom_mb
     modprobe gpio_pca953x
-
     _i2c_io_exp_init
+((!BMC_ENABLE)) && { 
     _i2c_fan_init
     _i2c_volmon_init
     _i2c_fan_speed_init
+ }
     _i2c_temp_init
     modprobe jc42
+    rmmod gpio_ich
     _i2c_gpio_init
+    modprobe gpio_ich
     _i2c_mb_eeprom_init "new"
     _i2c_qsfp_eeprom_init "new"
     _i2c_sfp_eeprom_init "new"
+((!BMC_ENABLE)) && {
     _i2c_psu_eeprom_init "new"
     _i2c_led_psu_status_set
     _i2c_led_fan_status_set
     _i2c_led_fan_tray_status_set
 
+    # rov for mac init
+    _mac_vdd_init
+
     #SYS LED set green
     COLOR_SYS_LED="green"
     _i2c_sys_led
+}
 
     echo "_i2c_init done" > /run/.platform_init_done
+}
+
+function _check_bmc_enable {
+	
+	  # check if sysfs already exist for main mux, if yes, bmc not enabled
+	  if [ -e "${PATH_SYS_I2C_DEVICES}/i2c-${NUM_MAIN_MUX_CHAN0_DEVICE}" ]; then
+	      _print "BMC NOT enabled"
+	      BMC_ENABLE=0
+	      return 
+	  fi
+	  
+    # sysfs not exist, check if main mux accessable, if no, bmc enabled
+    i2cget -y ${NUM_I801_DEVICE} 0x76 0 2>/dev/null
+    result=$?
+    _print "_check_bmc_enable result=${result}"
+    if [ $result -eq 0 ]; then
+        _print "BMC NOT enabled"
+        BMC_ENABLE=0
+    else 
+        _print "BMC enabled"
+        BMC_ENABLE=1
+    fi
+}
+
+function _mac_vdd_init {
+    # read mac vid register value from CPLD
+    val=`i2cget -y ${NUM_CPLD_DEVICE} ${CPLD_I2C_ADDR} 0x42 2>/dev/null`
+
+    # get vid form register value [0:2]
+    vid=$(($val & 0x7))
+
+    # get rov val and reg according to vid
+    rov_val=${rov_val_array[$vid]}
+    rov_reg=${rov_reg_array[$vid]}
+    echo "vid=${vid}, rov_val=${rov_val}, rov_reg=${rov_reg}"
+
+    # write the rov reg to rov
+    i2cset -y -r ${NUM_ROV_DEVICE} ${ROV_I2C_ADDR} 0x21 ${rov_reg} w
+
+    if [ $? -eq 0 ]; then
+        echo "set ROV for mac vdd done"
+    else
+        echo "set ROV for mac vdd fail"
+    fi
 }
 
 #I2C Deinit
@@ -305,14 +396,17 @@ function _i2c_io_exp_init {
 
     #Golden Finger to active CPLD
     i2cget -y ${NUM_CPLD_DEVICE} 0x74 2
+
+((!BMC_ENABLE)) && {
     #BMC dummy board reset
     echo "BMC dummy board reset"
     i2cset -y -r ${NUM_I801_DEVICE} 0x26 4 0x00
     i2cset -y -r ${NUM_I801_DEVICE} 0x26 5 0x00
     i2cset -y -r ${NUM_I801_DEVICE} 0x26 2 0x3F
     i2cset -y -r ${NUM_I801_DEVICE} 0x26 3 0x1F
-    i2cset -y -r ${NUM_I801_DEVICE} 0x26 6 0xC0
+    i2cset -y -r ${NUM_I801_DEVICE} 0x26 6 0xD0
     i2cset -y -r ${NUM_I801_DEVICE} 0x26 7 0x00
+}
 
     #CPU Baord
     i2cset -y -r ${NUM_I801_DEVICE} 0x77 6 0xFF
@@ -408,7 +502,7 @@ function _i2c_io_exp_init {
     i2cset -y -r ${NUM_I801_DEVICE} 0x74 6 0x08
     i2cset -y -r ${NUM_I801_DEVICE} 0x74 7 0x1F
 
-
+((!BMC_ENABLE)) && {
     #LED board after PVT (BAREFOOT_IO_EXP_LED_ID)
     echo "Init LED IO Expender"
     echo "LED_CHANNEL=${NUM_MAIN_MUX_CHAN1_DEVICE}"
@@ -450,6 +544,7 @@ function _i2c_io_exp_init {
     i2cset -y -r ${NUM_FRU_MUX_CHAN2_DEVICE} 0x20 7 0xCC
 
 }
+}
 
 #FANIN Init
 function _i2c_fan_init {
@@ -471,13 +566,28 @@ function _i2c_fan_init {
     echo "Done"
 }
 
+# To set the global variable GPIO_OFFSET
+function _set_gpio_offset {
+    GPIO_OFFSET=0
+    for d in `ls /sys/class/gpio/ | grep gpiochip`
+    do   
+        gpiochip_no=${d##gpiochip}
+        if [ $gpiochip_no -gt 255 ]; then 
+            GPIO_OFFSET=256
+            break
+        fi   
+    done 
+    _print "set GPIO_OFFSET=${GPIO_OFFSET}"
+}
+
 #GPIO Init
 function _i2c_gpio_init {
     local i=0
     #ABS Port 0-15
     echo "pca9535 0x20" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN4_DEVICE}/new_device
+    _set_gpio_offset
     #for i in {240..255};
-    for((i=${GPIO_BASE}+240;i<=${GPIO_BASE}+255;i++));
+    for((i=${GPIO_OFFSET}+240;i<=${GPIO_OFFSET}+255;i++));
     do
         echo $i > /sys/class/gpio/export
         echo 1 > /sys/class/gpio/gpio${i}/active_low
@@ -486,7 +596,7 @@ function _i2c_gpio_init {
     #ABS Port 16-31
     echo "pca9535 0x21" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN4_DEVICE}/new_device
     #for i in {224..239};
-    for((i=${GPIO_BASE}+224;i<=${GPIO_BASE}+239;i++));
+    for((i=${GPIO_OFFSET}+224;i<=${GPIO_OFFSET}+239;i++));
     do
         echo $i > /sys/class/gpio/export
         echo 1 > /sys/class/gpio/gpio${i}/active_low
@@ -495,7 +605,7 @@ function _i2c_gpio_init {
     #INT Port 0-15
     echo "pca9535 0x22" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN4_DEVICE}/new_device
     #for i in {208..223};
-    for((i=${GPIO_BASE}+208;i<=${GPIO_BASE}+223;i++));
+    for((i=${GPIO_OFFSET}+208;i<=${GPIO_OFFSET}+223;i++));
     do
         echo $i > /sys/class/gpio/export
         echo 1 > /sys/class/gpio/gpio${i}/active_low
@@ -504,7 +614,7 @@ function _i2c_gpio_init {
     #INT Port 16-31
     echo "pca9535 0x23" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN4_DEVICE}/new_device
     #for i in {192..207};
-    for((i=${GPIO_BASE}+192;i<=${GPIO_BASE}+207;i++));
+    for((i=${GPIO_OFFSET}+192;i<=${GPIO_OFFSET}+207;i++));
     do
         echo $i > /sys/class/gpio/export
         echo 1 > /sys/class/gpio/gpio${i}/active_low
@@ -513,28 +623,30 @@ function _i2c_gpio_init {
     #SFP+
     echo "pca9535 0x27" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN4_DEVICE}/new_device
     #for i in {176..191};
-    for((i=${GPIO_BASE}+176;i<=${GPIO_BASE}+191;i++));
+    for((i=${GPIO_OFFSET}+176;i<=${GPIO_OFFSET}+191;i++));
     do
         echo $i > /sys/class/gpio/export
         case ${i} in
-            $((${GPIO_BASE}+176)) | \
-            $((${GPIO_BASE}+177)) | \
-            $((${GPIO_BASE}+178)) | \
-            $((${GPIO_BASE}+179)) | \
-            $((${GPIO_BASE}+182)) | \
-            $((${GPIO_BASE}+183)) | \
-            $((${GPIO_BASE}+188)) | \
-            $((${GPIO_BASE}+189)) | \
-            $((${GPIO_BASE}+190)) | \
-            $((${GPIO_BASE}+191)) )
+            #176|177|178|179|182|183|188|189|190|191)
+            $((${GPIO_OFFSET}+176)) | \
+            $((${GPIO_OFFSET}+177)) | \
+            $((${GPIO_OFFSET}+178)) | \
+            $((${GPIO_OFFSET}+179)) | \
+            $((${GPIO_OFFSET}+182)) | \
+            $((${GPIO_OFFSET}+183)) | \
+            $((${GPIO_OFFSET}+188)) | \
+            $((${GPIO_OFFSET}+189)) | \
+            $((${GPIO_OFFSET}+190)) | \
+            $((${GPIO_OFFSET}+191)) )
                 echo 1 > /sys/class/gpio/gpio${i}/active_low
             ;;
-            $((${GPIO_BASE}+180)) | \
-            $((${GPIO_BASE}+181)) | \
-            $((${GPIO_BASE}+184)) | \
-            $((${GPIO_BASE}+185)) | \
-            $((${GPIO_BASE}+186)) | \
-            $((${GPIO_BASE}+187)) )
+            #180|181|184|185|186|187)
+            $((${GPIO_OFFSET}+180)) | \
+            $((${GPIO_OFFSET}+181)) | \
+            $((${GPIO_OFFSET}+184)) | \
+            $((${GPIO_OFFSET}+185)) | \
+            $((${GPIO_OFFSET}+186)) | \
+            $((${GPIO_OFFSET}+187)) )
                 echo out > /sys/class/gpio/gpio${i}/direction
             ;;
         esac
@@ -576,7 +688,7 @@ function _i2c_gpio_init {
     #LP Mode Port 0-15
     echo "pca9535 0x20" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN5_DEVICE}/new_device
     #for i in {160..175};
-    for((i=${GPIO_BASE}+160;i<=${GPIO_BASE}+175;i++));
+    for((i=${GPIO_OFFSET}+160;i<=${GPIO_OFFSET}+175;i++));
     do
         echo $i > /sys/class/gpio/export
         echo out > /sys/class/gpio/gpio${i}/direction
@@ -585,7 +697,7 @@ function _i2c_gpio_init {
     #LP Mode Port 16-31
     echo "pca9535 0x21" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN5_DEVICE}/new_device
     #for i in {144..159};
-    for((i=${GPIO_BASE}+144;i<=${GPIO_BASE}+159;i++));
+    for((i=${GPIO_OFFSET}+144;i<=${GPIO_OFFSET}+159;i++));
     do
         echo $i > /sys/class/gpio/export
         echo out > /sys/class/gpio/gpio${i}/direction
@@ -594,58 +706,62 @@ function _i2c_gpio_init {
     #RST Port 0-15
     echo "pca9535 0x22" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN5_DEVICE}/new_device
     #for i in {128..143};
-    for((i=${GPIO_BASE}+128;i<=${GPIO_BASE}+143;i++));
+    for((i=${GPIO_OFFSET}+128;i<=${GPIO_OFFSET}+143;i++));
     do
         echo $i > /sys/class/gpio/export
-        echo out > /sys/class/gpio/gpio${i}/direction
         echo 1 > /sys/class/gpio/gpio${i}/active_low
-        echo 0 > /sys/class/gpio/gpio${i}/value
+        echo low > /sys/class/gpio/gpio${i}/direction
+        #echo out > /sys/class/gpio/gpio${i}/direction
+        #echo 0 > /sys/class/gpio/gpio${i}/value
     done
 
     #RST Port 16-31
     echo "pca9535 0x23" > /sys/bus/i2c/devices/i2c-${NUM_MUX1_CHAN5_DEVICE}/new_device
     #for i in {112..127};
-    for((i=${GPIO_BASE}+112;i<=${GPIO_BASE}+127;i++));
+    for((i=${GPIO_OFFSET}+112;i<=${GPIO_OFFSET}+127;i++));
     do
         echo $i > /sys/class/gpio/export
-        echo out > /sys/class/gpio/gpio${i}/direction
         echo 1 > /sys/class/gpio/gpio${i}/active_low
-        echo 0 > /sys/class/gpio/gpio${i}/value
+        echo low > /sys/class/gpio/gpio${i}/direction
+        #echo out > /sys/class/gpio/gpio${i}/direction
+        #echo 0 > /sys/class/gpio/gpio${i}/value
     done
     
+  ((!BMC_ENABLE)) && {  
     #PSU I/O on Dummy Board 0x25
     echo "pca9535 0x25" > /sys/bus/i2c/devices/i2c-${NUM_I801_DEVICE}/new_device
     #for i in {96..111};
-    for((i=${GPIO_BASE}+96;i<=${GPIO_BASE}+111;i++));
+    for((i=${GPIO_OFFSET}+96;i<=${GPIO_OFFSET}+111;i++));
     do
         echo $i > /sys/class/gpio/export
         case ${i} in
             #97|98|100|101|102|105|106|108)
-            $((${GPIO_BASE}+97))  | \
-            $((${GPIO_BASE}+98))  | \
-            $((${GPIO_BASE}+100)) | \
-            $((${GPIO_BASE}+101)) | \
-            $((${GPIO_BASE}+102)) | \
-            $((${GPIO_BASE}+105)) | \
-            $((${GPIO_BASE}+106)) | \
-            $((${GPIO_BASE}+108)) )
+            $((${GPIO_OFFSET}+97))  | \
+            $((${GPIO_OFFSET}+98))  | \
+            $((${GPIO_OFFSET}+100)) | \
+            $((${GPIO_OFFSET}+101)) | \
+            $((${GPIO_OFFSET}+102)) | \
+            $((${GPIO_OFFSET}+105)) | \
+            $((${GPIO_OFFSET}+106)) | \
+            $((${GPIO_OFFSET}+108)) )
                 echo 1 > /sys/class/gpio/gpio${i}/active_low
             ;;
             #98|101|106|107|108)
-            $((${GPIO_BASE}+98))  | \
-            $((${GPIO_BASE}+101)) | \
-            $((${GPIO_BASE}+106)) | \
-            $((${GPIO_BASE}+107)) | \
-            $((${GPIO_BASE}+108)) )
+            $((${GPIO_OFFSET}+98))  | \
+            $((${GPIO_OFFSET}+101)) | \
+            $((${GPIO_OFFSET}+106)) | \
+            $((${GPIO_OFFSET}+107)) | \
+            $((${GPIO_OFFSET}+108)) )
                 echo out > /sys/class/gpio/gpio${i}/direction
             ;;
         esac
     done
+  }
 }
 
 #GPIO DeInit
 function _i2c_gpio_deinit {
-    for((i=${GPIO_BASE}+96;i<=${GPIO_BASE}+255;i++));
+    for((i=${GPIO_OFFSET}+96;i<=${GPIO_OFFSET}+255;i++));
     do
          if [ -e "/sys/class/gpio/gpio${i}" ]; then
              echo ${i} > /sys/class/gpio/unexport
@@ -697,7 +813,7 @@ function _i2c_led_fan_tray_status_set {
 
     if [ "${FAN1_ALARM}" == "0" ] && [ "${FAN2_ALARM}" == "0" ]; then
         FAN_TRAY=1
-	echo "FAN_TRAY${FAN_TRAY}..."
+        echo "FAN_TRAY${FAN_TRAY}..."
         COLOR_SYS_LED="green"
         ONOFF_LED="on"
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
@@ -707,8 +823,8 @@ function _i2c_led_fan_tray_status_set {
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
         _i2c_fan_tray_led
     else
-	FAN_TRAY=1
-	echo "FAN_TRAY${FAN_TRAY}..."
+        FAN_TRAY=1
+        echo "FAN_TRAY${FAN_TRAY}..."
         COLOR_SYS_LED="green"
         ONOFF_LED="off"
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
@@ -720,8 +836,8 @@ function _i2c_led_fan_tray_status_set {
     fi
 
     if [ "${FAN3_ALARM}" == "0" ] && [ "${FAN4_ALARM}" == "0" ]; then
-	FAN_TRAY=2
-	echo "FAN_TRAY${FAN_TRAY}..."
+        FAN_TRAY=2
+        echo "FAN_TRAY${FAN_TRAY}..."
         COLOR_SYS_LED="green"
         ONOFF_LED="on"
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
@@ -731,8 +847,8 @@ function _i2c_led_fan_tray_status_set {
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
         _i2c_fan_tray_led
     else
-	FAN_TRAY=2
-	echo "FAN_TRAY${FAN_TRAY}..."
+        FAN_TRAY=2
+        echo "FAN_TRAY${FAN_TRAY}..."
         COLOR_SYS_LED="green"
         ONOFF_LED="off"
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
@@ -744,8 +860,8 @@ function _i2c_led_fan_tray_status_set {
     fi
 
     if [ "${FAN5_ALARM}" == "0" ] && [ "${FAN6_ALARM}" == "0" ]; then
-	FAN_TRAY=3
-	echo "FAN_TRAY${FAN_TRAY}..."
+        FAN_TRAY=3
+        echo "FAN_TRAY${FAN_TRAY}..."
         COLOR_SYS_LED="green"
         ONOFF_LED="on"
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
@@ -755,8 +871,8 @@ function _i2c_led_fan_tray_status_set {
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
         _i2c_fan_tray_led
     else
-	FAN_TRAY=3
-	echo "FAN_TRAY${FAN_TRAY}..."
+        FAN_TRAY=3
+        echo "FAN_TRAY${FAN_TRAY}..."
         COLOR_SYS_LED="green"
         ONOFF_LED="off"
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
@@ -768,8 +884,8 @@ function _i2c_led_fan_tray_status_set {
     fi
 
     if [ "${FAN7_ALARM}" == "0" ] && [ "${FAN8_ALARM}" == "0" ]; then
-	FAN_TRAY=4
-	echo "FAN_TRAY${FAN_TRAY}..."
+        FAN_TRAY=4
+        echo "FAN_TRAY${FAN_TRAY}..."
         COLOR_SYS_LED="green"
         ONOFF_LED="on"
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
@@ -779,8 +895,8 @@ function _i2c_led_fan_tray_status_set {
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
         _i2c_fan_tray_led
     else
-	FAN_TRAY=4
-	echo "FAN_TRAY${FAN_TRAY}..."
+        FAN_TRAY=4
+        echo "FAN_TRAY${FAN_TRAY}..."
         COLOR_SYS_LED="green"
         ONOFF_LED="off"
         echo "${COLOR_SYS_LED} ${ONOFF_LED}"
@@ -842,40 +958,46 @@ function _qsfp_port_i2c_var_set {
             regAddr=0x20
             dataAddr=0
             eeprombusbase=${NUM_MUX3_CHAN0_DEVICE}
-            gpioBase=$((${GPIO_BASE}+240))
+            gpioBase=$((${GPIO_OFFSET}+240))
+            #gpioBase=240
         ;;
         9|10|11|12|13|14|15|16)
             i2cbus=${NUM_MUX1_CHAN4_DEVICE}
             regAddr=0x20
             dataAddr=1
             eeprombusbase=${NUM_MUX4_CHAN0_DEVICE}
-            gpioBase=$((${GPIO_BASE}+240))
+            gpioBase=$((${GPIO_OFFSET}+240))
+            #gpioBase=240
         ;;
         17|18|19|20|21|22|23|24)
             i2cbus=${NUM_MUX1_CHAN4_DEVICE}
             regAddr=0x21
             dataAddr=0
             eeprombusbase=${NUM_MUX5_CHAN0_DEVICE}
-            gpioBase=$((${GPIO_BASE}+224-16))
+            gpioBase=$((${GPIO_OFFSET}+224-16))
+            #gpioBase=$((224 - 16))
         ;;
         25|26|27|28|29|30|31|32)
             i2cbus=${NUM_MUX1_CHAN4_DEVICE}
             regAddr=0x21
             dataAddr=1
             eeprombusbase=${NUM_MUX6_CHAN0_DEVICE}
-            gpioBase=$((${GPIO_BASE}+224-16))
+            gpioBase=$((${GPIO_OFFSET}+224-16))
+            #gpioBase=$((224 - 16))
         ;;
         33)
             i2cbus=${NUM_MUX1_CHAN7_DEVICE}
             regAddr=0x27
             dataAddr=0
-            gpioBase=$((${GPIO_BASE}+145))
+            gpioBase=$((${GPIO_OFFSET}+145))
+            #gpioBase=145
         ;;
         34)
             i2cbus=${NUM_MUX1_CHAN7_DEVICE}
             regAddr=0x27
             dataAddr=1
-            gpioBase=$((${GPIO_BASE}+143))
+            gpioBase=$((${GPIO_OFFSET}+143))
+            #gpioBase=143
         ;;
         *)
             echo "Please input 1~34"
@@ -951,7 +1073,6 @@ function _i2c_qsfp_eeprom_get {
 
     _qsfp_eeprom_var_set ${QSFP_PORT}
 
-echo "${PATH_SYS_I2C_DEVICES}/$eeprombus-$(printf "%04x" $eepromAddr)/eeprom"
     cat ${PATH_SYS_I2C_DEVICES}/$eeprombus-$(printf "%04x" $eepromAddr)/eeprom | hexdump -C
 }
 
@@ -1010,6 +1131,8 @@ function _i2c_mb_eeprom_init {
            [ -L ${PATH_SYS_I2C_DEVICES}/${NUM_I801_DEVICE}-0051 ]; then
         echo "0x51" > ${PATH_I801_DEVICE}/delete_device
     fi
+
+((!BMC_ENABLE)) && {
     #Init MB EEPROM
     if [ "${action}" == "new" ] && \
            ! [ -L ${PATH_SYS_I2C_DEVICES}/${NUM_I801_DEVICE}-0055 ]; then
@@ -1018,6 +1141,8 @@ function _i2c_mb_eeprom_init {
            [ -L ${PATH_SYS_I2C_DEVICES}/${NUM_I801_DEVICE}-0055 ]; then
         echo "0x55" > ${PATH_I801_DEVICE}/delete_device
     fi
+}
+
     echo "DONE"
 }
 
@@ -1071,7 +1196,7 @@ function _i2c_sfp_eeprom_init {
         return
     fi
 
-    #Init 1-32 ports EEPROM
+    #Init 33-34 ports EEPROM
     if [ "${action}" == "new" ] && \
        ! [ -L ${PATH_SYS_I2C_DEVICES}/${NUM_SFP1_DEVICE}-0050 ] && \
        ! [ -L ${PATH_SYS_I2C_DEVICES}/${NUM_SFP2_DEVICE}-0050 ]; then
@@ -1126,7 +1251,10 @@ function _i2c_qsfp_type_get {
     _qsfp_eeprom_var_set ${QSFP_PORT}
 
     #Get QSFP EEPROM info
-    qsfp_info=$(base64 ${PATH_SYS_I2C_DEVICES}/$eeprombus-$(printf "%04x" $eepromAddr)/eeprom)
+    local size=255
+    eeprom_path="${PATH_SYS_I2C_DEVICES}/$eeprombus-$(printf "%04x" $eepromAddr)/eeprom"
+    #echo "get ${eeprom_path}"
+    qsfp_info=$(dd if=${eeprom_path} bs=${size} count=1 2>/dev/null | base64)
 
     identifier=$(echo $qsfp_info | base64 -d -i | hexdump -s 128 -n 1 -e '"%x"')
     connector=$(echo $qsfp_info | base64 -d -i | hexdump -s 130 -n 1 -e '"%x"')
@@ -1296,7 +1424,6 @@ function _i2c_sys_led {
     fi
 
     #apply to io expander
-    echo "i2cset -m ${mask} -y ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}"
     i2cset -m ${mask} -y ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}
     echo "Done"
 
@@ -1398,7 +1525,6 @@ function _i2c_psu1_led {
         exit ${FALSE}
     fi
 
-    #echo "i2cset -m ${mask} -y -r ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}"
     i2cset -m ${mask} -y -r ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}
 }
 
@@ -1417,19 +1543,15 @@ function _i2c_psu2_led {
         exit ${FALSE}
     fi
 
-    #echo "i2cset -m ${mask} -y -r ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}"
     i2cset -m ${mask} -y -r ${NUM_MAIN_MUX_CHAN1_DEVICE} 0x75 2 ${value}
 }
 
 #Get PSU Status
 function _i2c_psu_status {
-GPIO_BASE=256
-    psu1_pwgood_gpio=$((${GPIO_BASE}+99))
-    psu1_exist_gpio=$((${GPIO_BASE}+100))
-    psu2_pwdgood_gpio=$((${GPIO_BASE}+96))
-    psu2_exist_gpio=$((${GPIO_BASE}+97))
-
-    #echo "psu1_pwgood_gpio:${psu1_pwgood_gpio}, psu1_exist_gpio:${psu1_exist_gpio}, psu2_pwdgood_gpio:${psu2_pwdgood_gpio}, psu2_exist_gpio:${psu2_exist_gpio}"
+    psu1_pwgood_gpio=$((${GPIO_OFFSET}+99))
+    psu1_exist_gpio=$((${GPIO_OFFSET}+100))
+    psu2_pwdgood_gpio=$((${GPIO_OFFSET}+96))
+    psu2_exist_gpio=$((${GPIO_OFFSET}+97))
 
     psu2PwGood=`cat /sys/class/gpio/gpio${psu2_pwdgood_gpio}/value` # PSU0_PWROK (0.0)
     psu2Exist=`cat /sys/class/gpio/gpio${psu2_exist_gpio}/value` # PSU0_PRSNT_L (0.1)
@@ -1438,6 +1560,13 @@ GPIO_BASE=256
     psu1Exist=`cat /sys/class/gpio/gpio${psu1_exist_gpio}/value` # PSU1_PRSNT_L (0.4)
     printf "PSU1 Exist:%d PSU1 PW Good:%d\n" $psu1Exist $psu1PwGood
     printf "PSU2 Exist:%d PSU2 PW Good:%d\n" $psu2Exist $psu2PwGood
+}
+
+# util function to get logx value
+function logx {
+    v=$1
+    n=$2
+    logx_res=$(echo "${v} ${n}" | awk '{printf "%f\n",log($1)/log($2)}')
 }
 
 #Set PSU LED on LED Board
@@ -1484,10 +1613,85 @@ function _i2c_led_psu_status_set {
     echo "set [PSU2 LED] = ${COLOR_SYS_LED}"
 }
 
+# get qsfp ddm data
+function _i2c_qsfp_ddm_get {
+
+    _qsfp_port_i2c_var_set ${QSFP_PORT}
+
+    # check if port presence
+    #status: 0 -> Down, 1 -> Up
+    status=`cat /sys/class/gpio/gpio$(( $(($gpioBase + (${QSFP_PORT} - 1) ^ 1)) ))/value`
+    if [ "${status}" == "0" ]; then
+        echo "port ${QSFP_PORT} not presence"
+        return
+    fi
+
+    _qsfp_eeprom_var_set ${QSFP_PORT}
+
+    # Get QSFP EEPROM info
+    # only need first 128 bytes (page0) for ddm parsing
+    local size=128
+    eeprom_path="${PATH_SYS_I2C_DEVICES}/$eeprombus-$(printf "%04x" $eepromAddr)/eeprom"
+    #echo "get ${eeprom_path}"
+    qsfp_info=$(dd if=${eeprom_path} bs=${size} count=1 2>/dev/null | base64)
+
+    # temperature
+    temp_val1=$(echo $qsfp_info | base64 -d -i | hexdump -s 22 -n 1 -e '"%d"')
+    temp_val2=$(echo $qsfp_info | base64 -d -i | hexdump -s 23 -n 1 -e '"%d"')
+    temp=$(echo "$temp_val1 $temp_val2" | awk '{printf "%f\n", $1 + $2/256.0}')
+    #temp=$(( ${temp_val1} + ${temp_val2}/256.0 ))
+    echo "temp=$temp"
+    # voltage
+    volt_val1=$(echo $qsfp_info | base64 -d -i | hexdump -s 26 -n 1 -e '"%d"')
+    volt_val2=$(echo $qsfp_info | base64 -d -i | hexdump -s 27 -n 1 -e '"%d"')
+    #volt=$(((($volt_val1 << 8) | volt_val2) / 10000))
+    volt_val3=$(( ($volt_val1 << 8) | $volt_val2 ))
+    volt=$(echo "$volt_val3" | awk '{printf "%f\n", $1/10000.0}')
+    echo "volt=$volt"
+
+    # 4 channels
+    for i in {0..3};
+    do
+        echo "channel $i:"
+        # txBias
+        offset=$(( 42 + $i*2 ))
+        txBias_val1=$(echo $qsfp_info | base64 -d -i | hexdump -s $offset -n 1 -e '"%d"')
+        offset=$(( 43 + $i*2 ))
+        txBias_val2=$(echo $qsfp_info | base64 -d -i | hexdump -s $offset -n 1 -e '"%d"')
+        txBias_val3=$(( ($txBias_val1 << 8) | $txBias_val2 ))
+        txBias=$(echo "$txBias_val3" | awk '{printf "%f\n", (131.0*$1)/65535}')
+        echo "   txBias=$txBias"
+        # txPower
+        offset=$(( 50 + $i*2 ))
+        txPower_val1=$(echo $qsfp_info | base64 -d -i | hexdump -s $offset -n 1 -e '"%d"')
+        offset=$(( 51 + $i*2 ))
+        txPower_val2=$(echo $qsfp_info | base64 -d -i | hexdump -s $offset -n 1 -e '"%d"')
+        txPower_val3=$(( ($txPower_val1 << 8) | $txPower_val2 ))
+        txPower_val4=$(echo "$txPower_val3" | awk '{printf "%f\n", $1*0.0001}')
+        logx $txPower_val4 10
+        txPower=$(echo "$logx_res" | awk '{printf "%f\n", $1*10}')
+        echo "   txPower=$txPower"
+        # rxPower
+        offset=$(( 34 + $i*2 ))
+        rxPower_val1=$(echo $qsfp_info | base64 -d -i | hexdump -s $offset -n 1 -e '"%d"')
+        offset=$(( 35 + $i*2 ))
+        rxPower_val2=$(echo $qsfp_info | base64 -d -i | hexdump -s $offset -n 1 -e '"%d"')
+        rxPower_val3=$(( ($rxPower_val1 << 8) | $rxPower_val2 ))
+        rxPower_val4=$(echo "$rxPower_val3" | awk '{printf "%f\n", $1*0.0001}')
+        logx $rxPower_val4 10
+        rxPower=$(echo "$logx_res" | awk '{printf "%f\n", $1*10}')
+        echo "   rxPower=$rxPower"
+    done
+}
+
 #Main Function
 function _main {
     start_time_str=`date`
     start_time_sec=$(date +%s)
+
+    _set_gpio_offset 
+    
+    _check_bmc_enable 
 
     if [ "${EXEC_FUNC}" == "help" ]; then
         _help
@@ -1498,9 +1702,13 @@ function _main {
     elif [ "${EXEC_FUNC}" == "i2c_temp_init" ]; then
         _i2c_temp_init
     elif [ "${EXEC_FUNC}" == "i2c_fan_init" ]; then
+    	((!BMC_ENABLE)) && { 
         _i2c_fan_init
+      }
     elif [ "${EXEC_FUNC}" == "i2c_volmon_init" ]; then
+    	((!BMC_ENABLE)) && {
         _i2c_volmon_init
+      }
     elif [ "${EXEC_FUNC}" == "i2c_io_exp_init" ]; then
         _i2c_io_exp_init
     elif [ "${EXEC_FUNC}" == "i2c_gpio_init" ]; then
@@ -1510,11 +1718,15 @@ function _main {
     elif [ "${EXEC_FUNC}" == "i2c_temp_init" ]; then
         _i2c_temp_init
     elif [ "${EXEC_FUNC}" == "i2c_mb_eeprom_get" ]; then
+    	((!BMC_ENABLE)) && {  
         _i2c_mb_eeprom_get
+      }
     elif [ "${EXEC_FUNC}" == "i2c_cpu_eeprom_get" ]; then
         _i2c_cpu_eeprom_get
     elif [ "${EXEC_FUNC}" == "i2c_psu_eeprom_get" ]; then
+    	((!BMC_ENABLE)) && {  
         _i2c_psu_eeprom_get
+      }
     elif [ "${EXEC_FUNC}" == "i2c_qsfp_eeprom_get" ]; then
         _i2c_qsfp_eeprom_get
     elif [ "${EXEC_FUNC}" == "i2c_qsfp_eeprom_init" ]; then
@@ -1524,36 +1736,59 @@ function _main {
     elif [ "${EXEC_FUNC}" == "i2c_mb_eeprom_init" ]; then
         _i2c_mb_eeprom_init ${MB_EEPROM_ACTION}
     elif [ "${EXEC_FUNC}" == "i2c_psu_eeprom_init" ]; then
+    	((!BMC_ENABLE)) && {  
         _i2c_psu_eeprom_init ${MB_EEPROM_ACTION}
+      }
     elif [ "${EXEC_FUNC}" == "i2c_qsfp_status_get" ]; then
         _i2c_qsfp_status_get
     elif [ "${EXEC_FUNC}" == "i2c_qsfp_type_get" ]; then
         _i2c_qsfp_type_get
     elif [ "${EXEC_FUNC}" == "i2c_led_psu_status_set" ]; then
+    	((!BMC_ENABLE)) && {  
         _i2c_led_psu_status_set
+      }
+    elif [ "${EXEC_FUNC}" == "i2c_qsfp_ddm_get" ]; then
+        _i2c_qsfp_ddm_get
     elif [ "${EXEC_FUNC}" == "i2c_led_fan_status_set" ]; then
+    	((!BMC_ENABLE)) && {  
         _i2c_led_fan_status_set
+      }
     elif [ "${EXEC_FUNC}" == "i2c_led_fan_tray_status_set" ]; then
+    	((!BMC_ENABLE)) && {  
         _i2c_led_fan_tray_status_set
+      }
     elif [ "${EXEC_FUNC}" == "i2c_sys_led" ]; then
+    	((!BMC_ENABLE)) && {  
         _i2c_sys_led
+      }
     elif [ "${EXEC_FUNC}" == "i2c_fan_led" ]; then
+      ((!BMC_ENABLE)) && {  
         _i2c_fan_led
+      }
     elif [ "${EXEC_FUNC}" == "i2c_fan_tray_led" ]; then
+      ((!BMC_ENABLE)) && {  
         _i2c_fan_tray_led
+      }
     elif [ "${EXEC_FUNC}" == "i2c_psu1_led" ]; then
+    	((!BMC_ENABLE)) && {  
         _i2c_psu1_led
+      }
     elif [ "${EXEC_FUNC}" == "i2c_psu2_led" ]; then
+    	((!BMC_ENABLE)) && {  
         _i2c_psu2_led
+      }
     elif [ "${EXEC_FUNC}" == "i2c_board_type_get" ]; then
         _i2c_board_type_get
     elif [ "${EXEC_FUNC}" == "i2c_cpld_version" ]; then
         _i2c_cpld_version
     elif [ "${EXEC_FUNC}" == "i2c_psu_status" ]; then
+    	((!BMC_ENABLE)) && {  
         _i2c_psu_status
+      }
     elif [ "${EXEC_FUNC}" == "i2c_port_led_set" ]; then
         _i2c_port_led_set
     elif [ "${EXEC_FUNC}" == "i2c_test_all" ]; then
+    	((!BMC_ENABLE)) && {  
         _i2c_init
         _i2c_temp_init
         _i2c_fan_init
@@ -1564,6 +1799,7 @@ function _main {
         _i2c_board_type_get
         _i2c_cpld_version
         _i2c_psu_status
+      }  
     else
         echo "Invalid Parameters, Exit!!!"
         _help
@@ -1582,4 +1818,3 @@ function _main {
 }
 
 _main
-

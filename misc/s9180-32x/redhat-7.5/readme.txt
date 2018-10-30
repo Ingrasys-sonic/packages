@@ -36,6 +36,7 @@
      yum install i2c-tools -y 
      yum groupinstall "Development Tools" -y 
      yum install kernel-devel Kernel-headers -y 
+     yum install OpenIPMI ipmitool
 
   2) make and install kernel modules
      cd moudles/
@@ -56,6 +57,9 @@
 
      c. verify platform info
         i2c_utils_redhat.sh help
+
+  5) verify ipmitool with BMC
+     ipmitool sdr
 
 - The utility is only for Redhat 7.5 evalution, not for formal release.
   If you want to verify and test equipment, you can use the SONiC or ONL platform.
