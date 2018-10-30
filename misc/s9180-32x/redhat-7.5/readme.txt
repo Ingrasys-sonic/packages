@@ -1,4 +1,4 @@
-# Release Note 2018/07/04
+# Release Note 2018/10/30
 - The packages are based on Redhat linux 7.5 minimal installation.
   If your environment has any changes, please modify based on yours.
 
@@ -36,7 +36,7 @@
      yum install i2c-tools -y 
      yum groupinstall "Development Tools" -y 
      yum install kernel-devel Kernel-headers -y 
-     yum install OpenIPMI ipmitool
+     yum install ipmitool
 
   2) make and install kernel modules
      cd moudles/
