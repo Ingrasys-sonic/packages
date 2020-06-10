@@ -1,7 +1,7 @@
-From d611a3c6fdb6095110db45a996de72aec50261b2 Mon Sep 17 00:00:00 2001
+From 0ef92ff4d4e51d574f6f9312c12fc9c83ba11cfc Mon Sep 17 00:00:00 2001
 From: leo lin <leo.yt.lin@ufispace.com>
-Date: Wed, 29 Apr 2020 11:09:31 +0800
-Subject: [PATCH] patch for s9180-32x-48d with commit id 331866
+Date: Wed, 10 Jun 2020 10:29:41 +0800
+Subject: [PATCH] sonic patch for s9180-32x-48d with commit id 331866
 
 ---
  .../x86_64-ingrasys_s9180_32x-r0/fancontrol.bmc    |   11 +
@@ -17,8 +17,8 @@ Subject: [PATCH] patch for s9180-32x-48d with commit id 331866
  platform/barefoot/rules.mk                         |    2 +-
  .../sonic-platform-ingrasys-s9180-32x.postinst     |    5 +
  .../sonic-platform-ingrasys-s9280-64x.postinst     |    5 +
- .../s9180-32x/utils/i2c_utils.sh                   | 1737 ++------------------
- .../s9180-32x/utils/i2c_utils_bmc.sh               | 1223 ++++++++++++++
+ .../s9180-32x/utils/i2c_utils.sh                   | 1735 ++------------------
+ .../s9180-32x/utils/i2c_utils_bmc.sh               | 1225 ++++++++++++++
  .../s9180-32x/utils/i2c_utils_nobmc.sh             | 1721 +++++++++++++++++++
  .../s9180-32x/utils/i2c_utils_wrap.sh              |    1 +
  17 files changed, 3376 insertions(+), 1620 deletions(-)
@@ -280,15 +280,15 @@ index 00000000..25cdfb03
 +
 diff --git a/device/ingrasys/x86_64-ingrasys_s9180_32x-r0/pmon_daemon_control.json b/device/ingrasys/x86_64-ingrasys_s9180_32x-r0/pmon_daemon_control.json
 new file mode 100644
-index 00000000..d00d924b
+index 00000000..8ea06019
 --- /dev/null
 +++ b/device/ingrasys/x86_64-ingrasys_s9180_32x-r0/pmon_daemon_control.json
 @@ -0,0 +1,7 @@
 +{
 +    "skip_thermalctld": true,
 +    "skip_ledd": true,
-+    "skip_xcvrd": false,
-+    "skip_psud": false,
++    "skip_xcvrd": true,
++    "skip_psud": true,
 +    "skip_syseepromd": false 
 +}
 diff --git a/device/ingrasys/x86_64-ingrasys_s9180_32x-r0/sensors_bmc.conf b/device/ingrasys/x86_64-ingrasys_s9180_32x-r0/sensors_bmc.conf
@@ -440,7 +440,7 @@ index 00000000..1addccc6
 +
 +#DEBHELPER#
 diff --git a/platform/barefoot/sonic-platform-modules-ingrasys/s9180-32x/utils/i2c_utils.sh b/platform/barefoot/sonic-platform-modules-ingrasys/s9180-32x/utils/i2c_utils.sh
-index d8e5778f..dfb0e3c0 100755
+index d8e5778f..86f564ef 100755
 --- a/platform/barefoot/sonic-platform-modules-ingrasys/s9180-32x/utils/i2c_utils.sh
 +++ b/platform/barefoot/sonic-platform-modules-ingrasys/s9180-32x/utils/i2c_utils.sh
 @@ -19,18 +19,9 @@
@@ -463,7 +463,7 @@ index d8e5778f..dfb0e3c0 100755
  
  ############################################################
  # Distributor ID: Debian
-@@ -77,1644 +68,158 @@ NUM_SFP1_DEVICE=$(( ${NUM_MUX7_CHAN0_DEVICE} + 4 )) # CPLD
+@@ -77,1644 +68,156 @@ NUM_SFP1_DEVICE=$(( ${NUM_MUX7_CHAN0_DEVICE} + 4 )) # CPLD
  NUM_SFP2_DEVICE=$(( ${NUM_MUX7_CHAN0_DEVICE} + 5 )) # CPLD
  NUM_ROV_DEVICE=${NUM_MAIN_MUX_CHAN6_DEVICE}
  
@@ -506,7 +506,6 @@ index d8e5778f..dfb0e3c0 100755
  
 -#GPIO Offset
 -GPIO_OFFSET=0
-+BMC_FANCTL="fancontrol.bmc"
 +NOBMC_FANCTL="fancontrol.nobmc"
 +FANCTL_CFG="fancontrol"
  
@@ -580,7 +579,6 @@ index d8e5778f..dfb0e3c0 100755
 -    modprobe i2c_dev
 -    modprobe i2c_mux_pca954x force_deselect_on_exit=1
 -    #modprobe cpld_wdt
-+BMC_SENSORS="sensors_bmc.conf"
 +NOBMC_SENSORS="sensors_nobmc.conf"
 +SENSORS_CFG="sensors.conf"
  
@@ -1082,21 +1080,21 @@ index d8e5778f..dfb0e3c0 100755
 +    # need to adapt the chagne for bmc enable
 +    ((adapt_change)) && {
 +        echo "adapting change ..."
-+    	# change utils script link target
-+    	rm -rf ${UTIL_PATH}/${WRAP_UTIL}
-+    	ln -s ${UTIL_PATH}/${BMC_UTIL} ${UTIL_PATH}/${WRAP_UTIL}
-+    	# change sensors config
-+    	cp -f ${SHARE_PATH}/${BMC_SENSORS} ${SHARE_PATH}/${SENSORS_CFG}
-+    	# change fancontrol config
-+    	cp -f ${SHARE_PATH}/${BMC_FANCTL} ${SHARE_PATH}/${FANCTL_CFG}
-+    	# change plugin python script for psuutil
-+    	rm -f ${PLUGIN_PATH}/${PSUUTIL_PYC}
-+    	cp -f ${PLUGIN_PATH}/${BMC_PSUUTIL} ${PLUGIN_PATH}/${PSUUTIL} 	
++        # change utils script link target
++        rm -rf ${UTIL_PATH}/${WRAP_UTIL}
++        ln -s ${UTIL_PATH}/${BMC_UTIL} ${UTIL_PATH}/${WRAP_UTIL}
++        # remove sensors config
++        rm -f ${SHARE_PATH}/${SENSORS_CFG}
++        # remove fancontrol config
++        rm -f ${SHARE_PATH}/${FANCTL_CFG}
++        # change plugin python script for psuutil
++        rm -f ${PLUGIN_PATH}/${PSUUTIL_PYC}
++        cp -f ${PLUGIN_PATH}/${BMC_PSUUTIL} ${PLUGIN_PATH}/${PSUUTIL}
 +        # restart docker pmon if it is already running
 +        exist=`docker ps | grep pmon`
-+	if [ ! -z "${exist}" ]; then
++        if [ ! -z "${exist}" ]; then
 +            docker restart pmon
-+	fi
++        fi
 +        
 +    }
 +}
@@ -2230,10 +2228,10 @@ index d8e5778f..dfb0e3c0 100755
  
 diff --git a/platform/barefoot/sonic-platform-modules-ingrasys/s9180-32x/utils/i2c_utils_bmc.sh b/platform/barefoot/sonic-platform-modules-ingrasys/s9180-32x/utils/i2c_utils_bmc.sh
 new file mode 100644
-index 00000000..80ee5eba
+index 00000000..63a02070
 --- /dev/null
 +++ b/platform/barefoot/sonic-platform-modules-ingrasys/s9180-32x/utils/i2c_utils_bmc.sh
-@@ -0,0 +1,1223 @@
+@@ -0,0 +1,1225 @@
 +#!/bin/bash
 +
 +# Copyright (C) 2017 Ingrasys, Inc.
@@ -2775,9 +2773,10 @@ index 00000000..80ee5eba
 +    do
 +        echo $i > /sys/class/gpio/export
 +        echo 1 > /sys/class/gpio/gpio${i}/active_low
-+        echo low > /sys/class/gpio/gpio${i}/direction
-+        #echo out > /sys/class/gpio/gpio${i}/direction
-+        #echo 0 > /sys/class/gpio/gpio${i}/value
++        # value low for direction not official support
++        #echo low > /sys/class/gpio/gpio${i}/direction
++        echo out > /sys/class/gpio/gpio${i}/direction
++        echo 0 > /sys/class/gpio/gpio${i}/value
 +    done
 +
 +    #RST Port 16-31
@@ -2787,9 +2786,10 @@ index 00000000..80ee5eba
 +    do
 +        echo $i > /sys/class/gpio/export
 +        echo 1 > /sys/class/gpio/gpio${i}/active_low
-+        echo low > /sys/class/gpio/gpio${i}/direction
-+        #echo out > /sys/class/gpio/gpio${i}/direction
-+        #echo 0 > /sys/class/gpio/gpio${i}/value
++        # value low for direction not official support
++        #echo low > /sys/class/gpio/gpio${i}/direction
++        echo out > /sys/class/gpio/gpio${i}/direction
++        echo 0 > /sys/class/gpio/gpio${i}/value
 +    done
 +    
 +}
